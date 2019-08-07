@@ -1,0 +1,28 @@
+syntax = "proto3";
+
+package probepub;
+
+// Interface exported by the server.
+service  ProbePub {
+
+  // client/rdsync-to-rdsync streaming RPC
+  //
+  // publish rttrecord to rdsync-master.
+  rpc PublishRTT(stream RTTRecord) returns (PubStat) {}
+
+}
+
+message RTTRecord {
+    string channel = 1;
+    int64 ts = 2;
+    string vip = 3;
+    string qip = 4;
+    int32 method = 5;
+    int32 rtt = 6;
+    int32 hop = 7;
+}
+
+message PubStat {
+    int32 probe_count = 1;
+    int32 elapsed_time = 2;
+}
