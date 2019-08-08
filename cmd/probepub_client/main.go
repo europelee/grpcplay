@@ -12,13 +12,15 @@ import (
 )
 
 var (
+	interval   = flag.Int("pub_interval", 5, "publish interval(seconds)")
+	minRecNum  = flag.Int("min_record_num", 1000, "min record number each collect time")
 	serverAddr = flag.String("server_addr", "127.0.0.1:10000", "The server address in the format of host:port")
 )
 
 func runPubRtt(client pb.ProbePubClient) {
 	// Create a random number of random points
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
-	count := int(r.Int31n(2)) + 2 // Traverse at least two points
+	count := int(r.Int31n(500)) + *minRecNum // Traverse at least two points
 	var recrods []*pb.RTTRecord
 	for i := 0; i < count; i++ {
 		recrods = append(recrods,
@@ -61,7 +63,7 @@ func main() {
 	}
 	defer conn.Close()
 	c := pb.NewProbePubClient(conn)
-	t := time.NewTicker(time.Duration(5) * time.Second)
+	t := time.NewTicker(time.Duration(*interval) * time.Second)
 	defer t.Stop()
 	for {
 		select {
