@@ -3,29 +3,46 @@ package main
 import (
 	"context"
 	"flag"
+	"fmt"
 	"log"
 	"math/rand"
+	"os"
+	"runtime/debug"
 	"time"
+
+	"google.golang.org/grpc/connectivity"
 
 	pb "github.com/europelee/grpcplay/internal/probepub"
 	"google.golang.org/grpc"
 )
 
 var (
+	loopNum    = flag.Int("loop_num", 3, "loop num")
 	interval   = flag.Int("pub_interval", 5, "publish interval(seconds)")
 	minRecNum  = flag.Int("min_record_num", 1000, "min record number each collect time")
 	serverAddr = flag.String("server_addr", "127.0.0.1:10000", "The server address in the format of host:port")
 )
 
-func runPubRtt(client pb.ProbePubClient) {
+func runPubRtt(s pb.ProbePub_PublishRTTClient) error {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf(fmt.Sprintf("exception: %s\n", r))
+			log.Printf(fmt.Sprintf("%s", debug.Stack()))
+			os.Exit(-1)
+		}
+	}()
+	if s == nil {
+		return fmt.Errorf("s==nil")
+	}
 	// Create a random number of random points
 	r := rand.New(rand.NewSource(time.Now().UnixNano()))
 	count := int(r.Int31n(500)) + *minRecNum // Traverse at least two points
 	var recrods []*pb.RTTRecord
 	for i := 0; i < count; i++ {
+		chn := fmt.Sprintf("mix_ping|%d", os.Getpid())
 		recrods = append(recrods,
 			&pb.RTTRecord{
-				Channel: "mix_ping",
+				Channel: chn,
 				Ts:      time.Now().Unix(),
 				Vip:     "1.1.1.1",
 				Qip:     "3.3.3.3",
@@ -35,40 +52,83 @@ func runPubRtt(client pb.ProbePubClient) {
 			},
 		)
 	}
-	log.Printf("publish %d recrods.", len(recrods))
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	stream, err := client.PublishRTT(ctx)
-	if err != nil {
-		log.Fatalf("%v.PublishRTT(_) = _, %v", client, err)
-	}
+
 	for _, r := range recrods {
-		if err := stream.Send(r); err != nil {
-			log.Fatalf("%v.Send(%v) = %v", stream, r, err)
+		if err := s.Send(r); err != nil {
+			log.Printf("%v.Send(%v) = %v", s, r, err)
+			return err
 		}
 	}
-	reply, err := stream.CloseAndRecv()
-	if err != nil {
-		log.Fatalf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+	log.Printf("finish publishing %d recrods.", len(recrods))
+	return nil
+}
+
+func cleanNetStream(curConn *grpc.ClientConn, curStream pb.ProbePub_PublishRTTClient) {
+	if curConn != nil {
+		log.Printf("curConn.GetState()==%s", curConn.GetState().String())
+		if curConn.GetState() != connectivity.Shutdown {
+			if err := curConn.Close(); err != nil {
+				log.Printf("close conn fail %v", err.Error())
+			}
+		}
 	}
-	log.Printf("pub summary: %v", reply)
+	if curStream != nil {
+		if _, err := curStream.CloseAndRecv(); err != nil {
+			log.Printf("close stream fail %v", err.Error())
+		}
+	}
+}
+func createNetStream() (*grpc.ClientConn, pb.ProbePub_PublishRTTClient, error) {
+	// Set up a connection to the server.
+	conn, err := grpc.Dial(*serverAddr, grpc.WithInsecure())
+	if err != nil {
+		log.Printf("did not connect: %v", err)
+		return nil, nil, err
+	}
+	c := pb.NewProbePubClient(conn)
+	stream, err := c.PublishRTT(context.Background())
+	if err != nil {
+		log.Printf("%v.PublishRTT(_) = _, %v", c, err)
+		conn.Close()
+		return nil, nil, err
+	}
+	return conn, stream, nil
 }
 
 func main() {
 	flag.Parse()
-	// Set up a connection to the server.
-	conn, err := grpc.Dial(*serverAddr, grpc.WithInsecure())
-	if err != nil {
-		log.Fatalf("did not connect: %v", err)
-	}
-	defer conn.Close()
-	c := pb.NewProbePubClient(conn)
+	conn, stream, _ := createNetStream()
 	t := time.NewTicker(time.Duration(*interval) * time.Second)
 	defer t.Stop()
+	loopIdx := 0
+LOOP:
 	for {
 		select {
 		case <-t.C:
-			runPubRtt(c)
+			err := runPubRtt(stream)
+			if err != nil {
+				cleanNetStream(conn, stream)
+				conn, stream, _ = createNetStream()
+			}
+			if *loopNum > 0 {
+				loopIdx++
+				if loopIdx >= *loopNum {
+					log.Print("end")
+					break LOOP
+				}
+			}
+
 		}
 	}
+	if stream != nil {
+		reply, err := stream.CloseAndRecv()
+		if err != nil {
+			log.Fatalf("%v.CloseAndRecv() got error %v, want %v", stream, err, nil)
+		}
+		log.Printf("pub summary: %v", reply)
+	}
+	if conn != nil {
+		conn.Close()
+	}
+
 }

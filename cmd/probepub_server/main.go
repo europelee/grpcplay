@@ -19,6 +19,7 @@ var (
 
 type server struct{}
 
+// PublishRTT every client would have a independent func
 func (s *server) PublishRTT(stream pb.ProbePub_PublishRTTServer) error {
 	var count int32
 	startTime := time.Now()
@@ -34,6 +35,7 @@ func (s *server) PublishRTT(stream pb.ProbePub_PublishRTTServer) error {
 			)
 		}
 		if err != nil {
+			log.Println("PublishRTT error:" + err.Error())
 			return err
 		}
 		if *logRecord {
