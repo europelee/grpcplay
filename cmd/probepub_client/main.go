@@ -52,14 +52,18 @@ func runPubRtt(s pb.ProbePub_PublishRTTClient) error {
 			},
 		)
 	}
-
+	tsStart := time.Now()
+	log.Printf("start send at time %v", tsStart.Format("2006-01-02_15-04-05.000"))
 	for _, r := range recrods {
 		if err := s.Send(r); err != nil {
 			log.Printf("%v.Send(%v) = %v", s, r, err)
 			return err
 		}
 	}
-	log.Printf("finish publishing %d recrods.", len(recrods))
+	tsEnd := time.Now()
+	log.Printf(
+		"finish publishing %d recrods at time %v", len(recrods), tsEnd.Format("2006-01-02_15-04-05.000"))
+	log.Printf("spend time %v", tsEnd.Unix()-tsStart.Unix())
 	return nil
 }
 
